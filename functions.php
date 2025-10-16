@@ -30,6 +30,16 @@ function getAccountOptions(): array
     return $stmt->fetchAll();
 }
 
+function getAccountById(int $id): ?array
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('SELECT * FROM accounts WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $account = $stmt->fetch();
+
+    return $account ?: null;
+}
+
 function createAccount(string $name, string $type): void
 {
     $db = getDatabase();
@@ -40,26 +50,152 @@ function createAccount(string $name, string $type): void
     ]);
 }
 
-function recordTransaction(int $accountId, float $amount, string $category, string $type, ?string $description, string $date): void
+function updateAccount(int $id, string $name, string $type): void
 {
     $db = getDatabase();
-    $stmt = $db->prepare('INSERT INTO transactions (account_id, amount, category, type, description, transaction_date)
-        VALUES (:account_id, :amount, :category, :type, :description, :transaction_date)');
+    $stmt = $db->prepare('UPDATE accounts SET name = :name, type = :type WHERE id = :id');
+    $stmt->execute([
+        ':id' => $id,
+        ':name' => trim($name),
+        ':type' => $type,
+    ]);
+}
+
+function deleteAccount(int $id): void
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('DELETE FROM accounts WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+}
+
+function getCategories(): array
+{
+    $db = getDatabase();
+    $stmt = $db->query('SELECT * FROM categories ORDER BY name ASC');
+    return $stmt->fetchAll();
+}
+
+function getCategoryOptions(): array
+{
+    $db = getDatabase();
+    $stmt = $db->query('SELECT id, name FROM categories ORDER BY name ASC');
+    return $stmt->fetchAll();
+}
+
+function getCategoryById(int $id): ?array
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('SELECT * FROM categories WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $category = $stmt->fetch();
+
+    return $category ?: null;
+}
+
+function createCategory(string $name, ?string $color = null): void
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('INSERT INTO categories (name, color) VALUES (:name, :color)');
+    $stmt->execute([
+        ':name' => trim($name),
+        ':color' => $color ?: null,
+    ]);
+}
+
+function updateCategory(int $id, string $name, ?string $color = null): void
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('UPDATE categories SET name = :name, color = :color WHERE id = :id');
+    $stmt->execute([
+        ':id' => $id,
+        ':name' => trim($name),
+        ':color' => $color ?: null,
+    ]);
+}
+
+function deleteCategory(int $id): void
+{
+    $db = getDatabase();
+    $generalId = getGeneralCategoryId();
+
+    if ($id === $generalId) {
+        throw new InvalidArgumentException('The General category cannot be deleted.');
+    }
+
+    $stmt = $db->prepare('UPDATE transactions SET category_id = :general_id WHERE category_id = :category_id');
+    $stmt->execute([
+        ':general_id' => $generalId,
+        ':category_id' => $id,
+    ]);
+
+    $stmt = $db->prepare('DELETE FROM categories WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+}
+
+function getGeneralCategoryId(): int
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('SELECT id FROM categories WHERE name = :name LIMIT 1');
+    $stmt->execute([':name' => 'General']);
+    $generalId = $stmt->fetchColumn();
+
+    if ($generalId) {
+        return (int)$generalId;
+    }
+
+    $stmt = $db->prepare('INSERT INTO categories (name, color) VALUES (:name, :color)');
+    $stmt->execute([
+        ':name' => 'General',
+        ':color' => '#0f172a',
+    ]);
+
+    return (int)$db->lastInsertId();
+}
+
+function createTransaction(int $accountId, float $amount, string $type, string $date, int $categoryId, ?string $description): void
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('INSERT INTO transactions (account_id, amount, type, description, transaction_date, category_id)
+        VALUES (:account_id, :amount, :type, :description, :transaction_date, :category_id)');
     $stmt->execute([
         ':account_id' => $accountId,
         ':amount' => abs($amount),
-        ':category' => trim($category),
         ':type' => $type,
-        ':description' => $description,
+        ':description' => $description ?: null,
         ':transaction_date' => $date,
+        ':category_id' => $categoryId,
     ]);
+}
+
+function updateTransaction(int $id, int $accountId, float $amount, string $type, string $date, int $categoryId, ?string $description): void
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('UPDATE transactions SET account_id = :account_id, amount = :amount, type = :type,
+        description = :description, transaction_date = :transaction_date, category_id = :category_id WHERE id = :id');
+    $stmt->execute([
+        ':id' => $id,
+        ':account_id' => $accountId,
+        ':amount' => abs($amount),
+        ':type' => $type,
+        ':description' => $description ?: null,
+        ':transaction_date' => $date,
+        ':category_id' => $categoryId,
+    ]);
+}
+
+function deleteTransaction(int $id): void
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('DELETE FROM transactions WHERE id = :id');
+    $stmt->execute([':id' => $id]);
 }
 
 function getRecentTransactions(int $limit = 10): array
 {
     $db = getDatabase();
-    $stmt = $db->prepare('SELECT t.*, a.name AS account_name FROM transactions t
+    $stmt = $db->prepare('SELECT t.*, a.name AS account_name, c.name AS category_name FROM transactions t
         INNER JOIN accounts a ON a.id = t.account_id
+        LEFT JOIN categories c ON c.id = t.category_id
         ORDER BY transaction_date DESC, t.id DESC
         LIMIT :limit');
     $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
@@ -83,6 +219,11 @@ function getTransactions(array $filters = []): array
         $params[':type'] = $filters['type'];
     }
 
+    if (!empty($filters['category_id']) && $filters['category_id'] !== 'all') {
+        $conditions[] = 't.category_id = :category_id';
+        $params[':category_id'] = (int)$filters['category_id'];
+    }
+
     if (!empty($filters['date_from'])) {
         $conditions[] = 't.transaction_date >= :date_from';
         $params[':date_from'] = $filters['date_from'];
@@ -95,8 +236,9 @@ function getTransactions(array $filters = []): array
 
     $where = $conditions ? ('WHERE ' . implode(' AND ', $conditions)) : '';
 
-    $sql = 'SELECT t.*, a.name AS account_name FROM transactions t
+    $sql = 'SELECT t.*, a.name AS account_name, c.name AS category_name FROM transactions t
         INNER JOIN accounts a ON a.id = t.account_id
+        LEFT JOIN categories c ON c.id = t.category_id
         ' . $where . '
         ORDER BY transaction_date DESC, t.id DESC';
 
@@ -108,6 +250,19 @@ function getTransactions(array $filters = []): array
     $stmt->execute();
 
     return $stmt->fetchAll();
+}
+
+function getTransactionById(int $id): ?array
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('SELECT t.*, a.name AS account_name, c.name AS category_name FROM transactions t
+        INNER JOIN accounts a ON a.id = t.account_id
+        LEFT JOIN categories c ON c.id = t.category_id
+        WHERE t.id = :id');
+    $stmt->execute([':id' => $id]);
+    $transaction = $stmt->fetch();
+
+    return $transaction ?: null;
 }
 
 function getSummaryMetrics(): array
@@ -135,10 +290,27 @@ function getSummaryMetrics(): array
 function getExpenseByCategory(): array
 {
     $db = getDatabase();
-    $stmt = $db->query('SELECT category, SUM(amount) AS total FROM transactions
-        WHERE type = "expense"
-        GROUP BY category
+    $stmt = $db->query('SELECT c.id, c.name AS category_name, c.color, IFNULL(SUM(t.amount), 0) AS total
+        FROM categories c
+        LEFT JOIN transactions t ON c.id = t.category_id AND t.type = "expense"
+        GROUP BY c.id
         ORDER BY total DESC');
+    return $stmt->fetchAll();
+}
+
+function getTopSpendingCategories(int $limit = 5): array
+{
+    $db = getDatabase();
+    $stmt = $db->prepare('SELECT c.name AS category_name, IFNULL(SUM(t.amount), 0) AS total
+        FROM categories c
+        LEFT JOIN transactions t ON c.id = t.category_id AND t.type = "expense"
+        GROUP BY c.id
+        HAVING total > 0
+        ORDER BY total DESC
+        LIMIT :limit');
+    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+    $stmt->execute();
+
     return $stmt->fetchAll();
 }
 

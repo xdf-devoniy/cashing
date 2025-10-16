@@ -1,15 +1,16 @@
 # Cashing Expense Tracker
 
-A lightweight PHP + SQLite expense tracking application with a modern Tailwind UI. Quickly log deposits and expenses across multiple accounts, including cash, bank, and Hamkor (or any custom account you add), and visualize your spending trends with interactive charts.
+A lightweight PHP + SQLite expense tracking application with a modern Tailwind UI. Quickly log deposits and expenses across multiple accounts, including cash, bank, and Hamkor (or any custom account you add), and visualize your spending trends with interactive charts. Amounts are displayed in Uzbek so'm (UZS) by default.
 
 ## Features
 
 - 📊 Dashboard with total balances, account summaries, and recent activity.
-- 💼 Manage unlimited accounts (cash, bank, savings, Hamkor, etc.).
-- 🧾 Record deposits and expenses with categories, notes, and dates.
-- 🔍 Filterable transactions view with date range and account filters.
-- 📈 Reports page featuring expense breakdowns and monthly cash-flow charts powered by Chart.js.
-- 💾 Auto-initialized SQLite database seeded with common accounts.
+- 💼 Manage unlimited accounts (cash, bank, savings, Hamkor, etc.) with full CRUD.
+- 🧾 Record, edit, and delete deposits and expenses tied to reusable spending categories.
+- 🏷️ Build your own category taxonomy (including colors) and reuse it while logging transactions.
+- 🔍 Filterable transactions view with account, category, type, and date range filters.
+- 📈 Reports page featuring top spending summaries and monthly cash-flow charts powered by Chart.js.
+- 💾 Auto-initialized SQLite database seeded with common accounts and starter categories.
 
 ## Getting Started
 
@@ -27,9 +28,9 @@ The first run will create a `data/database.sqlite` file and seed default account
 
 ## Project Structure
 
-- `index.php` – Single entry point containing the UI and routing between dashboard, transactions, and reports.
-- `functions.php` – Data-access helper functions for accounts, transactions, and reporting metrics.
-- `database.php` – Initializes the SQLite database and seeds default accounts.
+- `index.php` – Single entry point containing the UI and routing between dashboard, accounts, categories, transactions, and reports.
+- `functions.php` – Data-access helper functions for accounts, categories, transactions, and reporting metrics.
+- `database.php` – Initializes the SQLite database, runs lightweight migrations, and seeds default accounts and categories.
 - `data/` – Stores the generated SQLite database (gitignored).
 
 ## Tailwind & Chart.js
