@@ -221,11 +221,23 @@ $filters = [
 $transactions = $page === 'transactions' ? getTransactions($filters) : [];
 $expenseByCategory = getExpenseByCategory();
 $topSpendingCategories = getTopSpendingCategories();
-$monthlyCashFlow = getMonthlyCashFlow();
 
-$expenseChartSource = array_filter($expenseByCategory, static fn($item) => (float)$item['total'] > 0);
-if (!$expenseChartSource && $expenseByCategory) {
-    $expenseChartSource = $expenseByCategory;
+$reportFilters = [
+    'account_id' => $_GET['report_account'] ?? 'all',
+    'date_from' => $_GET['report_from'] ?? null,
+    'date_to' => $_GET['report_to'] ?? null,
+];
+
+$reportSummary = getSummaryMetrics($reportFilters);
+$reportExpenseByCategory = getExpenseByCategory($reportFilters);
+$reportTopSpendingCategories = getTopSpendingCategories(6, $reportFilters);
+$reportMonthlyCashFlow = getMonthlyCashFlow($reportFilters);
+$primarySpendingCategory = $reportTopSpendingCategories[0] ?? null;
+$hasExpenseDataForRange = array_sum(array_map(static fn($item) => (float)$item['total'], $reportExpenseByCategory)) > 0;
+
+$expenseChartSource = array_filter($reportExpenseByCategory, static fn($item) => (float)$item['total'] > 0);
+if (!$expenseChartSource && $reportExpenseByCategory) {
+    $expenseChartSource = $reportExpenseByCategory;
 }
 
 $expenseChartData = [
@@ -234,9 +246,9 @@ $expenseChartData = [
 ];
 
 $cashFlowChartData = [
-    'labels' => array_map(static fn($item) => $item['month'], $monthlyCashFlow),
-    'deposits' => array_map(static fn($item) => (float)$item['deposits'], $monthlyCashFlow),
-    'expenses' => array_map(static fn($item) => (float)$item['expenses'], $monthlyCashFlow),
+    'labels' => array_map(static fn($item) => $item['month'], $reportMonthlyCashFlow),
+    'deposits' => array_map(static fn($item) => (float)$item['deposits'], $reportMonthlyCashFlow),
+    'expenses' => array_map(static fn($item) => (float)$item['expenses'], $reportMonthlyCashFlow),
 ];
 
 $editAccountId = isset($_GET['edit_account']) ? (int)$_GET['edit_account'] : null;
@@ -668,12 +680,78 @@ $editTransaction = $editTransactionId ? getTransactionById($editTransactionId) :
                 </section>
             <?php elseif ($page === 'reports'): ?>
                 <section class="space-y-6">
+                    <form method="get" class="glass-card rounded-3xl border border-slate-200 p-6">
+                        <input type="hidden" name="page" value="reports">
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+                            <div>
+                                <label class="block text-sm text-slate-500">From date</label>
+                                <input type="date" name="report_from" value="<?php echo $reportFilters['date_from'] ? sanitize($reportFilters['date_from']) : ''; ?>" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 focus:border-slate-500 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-slate-500">To date</label>
+                                <input type="date" name="report_to" value="<?php echo $reportFilters['date_to'] ? sanitize($reportFilters['date_to']) : ''; ?>" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 focus:border-slate-500 focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-sm text-slate-500">Account scope</label>
+                                <select name="report_account" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 focus:border-slate-500 focus:outline-none">
+                                    <option value="all" <?php echo ($reportFilters['account_id'] ?? 'all') === 'all' ? 'selected' : ''; ?>>All accounts</option>
+                                    <?php foreach ($accountOptions as $option): ?>
+                                        <option value="<?php echo (int)$option['id']; ?>" <?php echo (string)$reportFilters['account_id'] === (string)$option['id'] ? 'selected' : ''; ?>><?php echo sanitize($option['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="flex items-end justify-end gap-3 md:justify-start">
+                                <button type="submit" class="rounded-xl bg-slate-900 px-4 py-2 text-white font-medium hover:bg-slate-800">Apply</button>
+                                <a href="?page=reports" class="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900">Reset</a>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <div class="glass-card rounded-3xl border border-slate-200 p-6">
+                            <p class="text-sm font-medium text-slate-500">Deposits in range</p>
+                            <p class="mt-2 text-2xl font-semibold text-emerald-600"><?php echo sanitize(formatCurrency((float)$reportSummary['total_deposits'])); ?></p>
+                        </div>
+                        <div class="glass-card rounded-3xl border border-slate-200 p-6">
+                            <p class="text-sm font-medium text-slate-500">Expenses in range</p>
+                            <p class="mt-2 text-2xl font-semibold text-rose-600"><?php echo sanitize(formatCurrency((float)$reportSummary['total_expenses'])); ?></p>
+                        </div>
+                        <div class="glass-card rounded-3xl border border-slate-200 p-6">
+                            <?php $net = (float)$reportSummary['total_balance']; ?>
+                            <p class="text-sm font-medium text-slate-500">Net cash flow</p>
+                            <p class="mt-2 text-2xl font-semibold <?php echo $net >= 0 ? 'text-emerald-600' : 'text-rose-600'; ?>"><?php echo sanitize(formatCurrency($net)); ?></p>
+                            <p class="mt-2 text-xs text-slate-500">Positive values mean you're saving more than spending.</p>
+                        </div>
+                    </div>
+
+                    <?php if ($primarySpendingCategory): ?>
+                        <?php
+                        $totalExpensesForRange = (float)$reportSummary['total_expenses'];
+                        $topShare = $totalExpensesForRange > 0 ? round(((float)$primarySpendingCategory['total'] / $totalExpensesForRange) * 100, 1) : 0;
+                        ?>
+                        <div class="glass-card rounded-3xl border border-slate-200 p-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <h2 class="text-xl font-semibold text-slate-900">Top spending focus</h2>
+                                <p class="text-sm text-slate-500">Most of your tracked expenses<?php echo $reportFilters['date_from'] || $reportFilters['date_to'] ? ' for this range' : ''; ?> go to <span class="font-medium text-slate-800"><?php echo sanitize($primarySpendingCategory['category_name']); ?></span>.</p>
+                                <p class="mt-3 text-sm text-slate-500">That accounts for about <span class="font-semibold text-slate-900"><?php echo sanitize((string)$topShare); ?>%</span> of your spending.</p>
+                            </div>
+                            <div class="rounded-2xl border border-slate-200 bg-white/80 p-4 text-center">
+                                <div class="mx-auto mb-3 h-12 w-12 rounded-full border-4 border-slate-100" style="background: <?php echo sanitize($primarySpendingCategory['color'] ?? '#f97316'); ?>;"></div>
+                                <p class="text-sm uppercase tracking-wide text-slate-400">Amount</p>
+                                <p class="mt-1 text-xl font-semibold text-rose-600"><?php echo sanitize(formatCurrency((float)$primarySpendingCategory['total'])); ?></p>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
                     <div class="glass-card rounded-3xl border border-slate-200 p-6">
                         <h2 class="text-xl font-semibold text-slate-900">Expense distribution</h2>
                         <p class="text-sm text-slate-500">See which categories consume most of your spending.</p>
                         <div class="mt-6">
                             <canvas id="expenseChart" height="280"></canvas>
                         </div>
+                        <?php if (!$hasExpenseDataForRange): ?>
+                            <p class="mt-4 text-sm text-slate-500">No expenses for the selected filters yet.</p>
+                        <?php endif; ?>
                     </div>
                     <div class="glass-card rounded-3xl border border-slate-200 p-6">
                         <h2 class="text-xl font-semibold text-slate-900">Monthly cash flow</h2>
@@ -681,18 +759,21 @@ $editTransaction = $editTransactionId ? getTransactionById($editTransactionId) :
                         <div class="mt-6">
                             <canvas id="cashFlowChart" height="320"></canvas>
                         </div>
+                        <?php if (!$reportMonthlyCashFlow): ?>
+                            <p class="mt-4 text-sm text-slate-500">No activity to chart for these filters.</p>
+                        <?php endif; ?>
                     </div>
                     <div class="glass-card rounded-3xl border border-slate-200 p-6">
                         <h2 class="text-xl font-semibold text-slate-900">Where you spend the most</h2>
-                        <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <?php foreach ($topSpendingCategories as $category): ?>
+                        <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <?php foreach ($reportTopSpendingCategories as $category): ?>
                                 <div class="rounded-2xl border border-slate-200 bg-white/80 p-4">
                                     <p class="text-sm uppercase tracking-wide text-slate-400">Category</p>
                                     <h3 class="text-lg font-semibold text-slate-900"><?php echo sanitize($category['category_name']); ?></h3>
                                     <p class="mt-3 text-2xl font-semibold text-rose-600"><?php echo sanitize(formatCurrency((float)$category['total'])); ?></p>
                                 </div>
                             <?php endforeach; ?>
-                            <?php if (!$topSpendingCategories): ?>
+                            <?php if (!$reportTopSpendingCategories): ?>
                                 <p class="text-sm text-slate-500">Log some expenses to populate this view.</p>
                             <?php endif; ?>
                         </div>

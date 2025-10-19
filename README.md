@@ -9,8 +9,9 @@ A lightweight PHP + SQLite expense tracking application with a modern Tailwind U
 - 🧾 Record, edit, and delete deposits and expenses tied to reusable spending categories.
 - 🏷️ Build your own category taxonomy (including colors) and reuse it while logging transactions.
 - 🔍 Filterable transactions view with account, category, type, and date range filters.
-- 📈 Reports page featuring top spending summaries and monthly cash-flow charts powered by Chart.js.
+- 📈 Reports page featuring date-range filters, focused insights, and monthly cash-flow charts powered by Chart.js.
 - 💾 Auto-initialized SQLite database seeded with common accounts and starter categories.
+- 🔄 Automatic migrations upgrade legacy databases by converting free-text categories into the structured category system.
 
 ## Getting Started
 

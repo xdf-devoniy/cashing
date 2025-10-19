@@ -135,21 +135,8 @@ function deleteCategory(int $id): void
 function getGeneralCategoryId(): int
 {
     $db = getDatabase();
-    $stmt = $db->prepare('SELECT id FROM categories WHERE name = :name LIMIT 1');
-    $stmt->execute([':name' => 'General']);
-    $generalId = $stmt->fetchColumn();
 
-    if ($generalId) {
-        return (int)$generalId;
-    }
-
-    $stmt = $db->prepare('INSERT INTO categories (name, color) VALUES (:name, :color)');
-    $stmt->execute([
-        ':name' => 'General',
-        ':color' => '#0f172a',
-    ]);
-
-    return (int)$db->lastInsertId();
+    return ensureGeneralCategoryId($db);
 }
 
 function createTransaction(int $accountId, float $amount, string $type, string $date, int $categoryId, ?string $description): void
@@ -265,7 +252,7 @@ function getTransactionById(int $id): ?array
     return $transaction ?: null;
 }
 
-function getSummaryMetrics(): array
+function getSummaryMetrics(array $filters = []): array
 {
     $db = getDatabase();
     $summary = [
@@ -274,10 +261,39 @@ function getSummaryMetrics(): array
         'total_deposits' => 0.0,
     ];
 
-    $stmt = $db->query('SELECT
+    $conditions = [];
+    $params = [];
+
+    if (!empty($filters['account_id']) && $filters['account_id'] !== 'all') {
+        $conditions[] = 'account_id = :account_id';
+        $params[':account_id'] = (int)$filters['account_id'];
+    }
+
+    if (!empty($filters['date_from'])) {
+        $conditions[] = 'transaction_date >= :date_from';
+        $params[':date_from'] = $filters['date_from'];
+    }
+
+    if (!empty($filters['date_to'])) {
+        $conditions[] = 'transaction_date <= :date_to';
+        $params[':date_to'] = $filters['date_to'];
+    }
+
+    $where = $conditions ? ('WHERE ' . implode(' AND ', $conditions)) : '';
+
+    $sql = 'SELECT
         IFNULL(SUM(CASE WHEN type = "deposit" THEN amount ELSE 0 END), 0) AS deposits,
         IFNULL(SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END), 0) AS expenses
-        FROM transactions');
+        FROM transactions ' . $where;
+
+    $stmt = $db->prepare($sql);
+
+    foreach ($params as $key => $value) {
+        $type = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+        $stmt->bindValue($key, $value, $type);
+    }
+
+    $stmt->execute();
     $totals = $stmt->fetch();
 
     $summary['total_deposits'] = (float)$totals['deposits'];
@@ -287,41 +303,93 @@ function getSummaryMetrics(): array
     return $summary;
 }
 
-function getExpenseByCategory(): array
+function getExpenseByCategory(array $filters = []): array
 {
     $db = getDatabase();
-    $stmt = $db->query('SELECT c.id, c.name AS category_name, c.color, IFNULL(SUM(t.amount), 0) AS total
-        FROM categories c
-        LEFT JOIN transactions t ON c.id = t.category_id AND t.type = "expense"
-        GROUP BY c.id
-        ORDER BY total DESC');
-    return $stmt->fetchAll();
-}
+    $params = [];
+    $joinConditions = ['c.id = t.category_id', 't.type = "expense"'];
 
-function getTopSpendingCategories(int $limit = 5): array
-{
-    $db = getDatabase();
-    $stmt = $db->prepare('SELECT c.name AS category_name, IFNULL(SUM(t.amount), 0) AS total
+    if (!empty($filters['account_id']) && $filters['account_id'] !== 'all') {
+        $joinConditions[] = 't.account_id = :account_id';
+        $params[':account_id'] = (int)$filters['account_id'];
+    }
+
+    if (!empty($filters['date_from'])) {
+        $joinConditions[] = 't.transaction_date >= :date_from';
+        $params[':date_from'] = $filters['date_from'];
+    }
+
+    if (!empty($filters['date_to'])) {
+        $joinConditions[] = 't.transaction_date <= :date_to';
+        $params[':date_to'] = $filters['date_to'];
+    }
+
+    $joinClause = implode(' AND ', $joinConditions);
+
+    $sql = 'SELECT c.id, c.name AS category_name, c.color, IFNULL(SUM(t.amount), 0) AS total
         FROM categories c
-        LEFT JOIN transactions t ON c.id = t.category_id AND t.type = "expense"
+        LEFT JOIN transactions t ON ' . $joinClause . '
         GROUP BY c.id
-        HAVING total > 0
-        ORDER BY total DESC
-        LIMIT :limit');
-    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        ORDER BY total DESC';
+
+    $stmt = $db->prepare($sql);
+
+    foreach ($params as $key => $value) {
+        $type = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+        $stmt->bindValue($key, $value, $type);
+    }
+
     $stmt->execute();
 
     return $stmt->fetchAll();
 }
 
-function getMonthlyCashFlow(): array
+function getTopSpendingCategories(int $limit = 5, array $filters = []): array
+{
+    $categories = getExpenseByCategory($filters);
+    $spending = array_values(array_filter($categories, static fn($item) => (float)$item['total'] > 0));
+
+    return array_slice($spending, 0, $limit);
+}
+
+function getMonthlyCashFlow(array $filters = []): array
 {
     $db = getDatabase();
-    $stmt = $db->query('SELECT strftime("%Y-%m", transaction_date) AS month,
+    $conditions = [];
+    $params = [];
+
+    if (!empty($filters['account_id']) && $filters['account_id'] !== 'all') {
+        $conditions[] = 'account_id = :account_id';
+        $params[':account_id'] = (int)$filters['account_id'];
+    }
+
+    if (!empty($filters['date_from'])) {
+        $conditions[] = 'transaction_date >= :date_from';
+        $params[':date_from'] = $filters['date_from'];
+    }
+
+    if (!empty($filters['date_to'])) {
+        $conditions[] = 'transaction_date <= :date_to';
+        $params[':date_to'] = $filters['date_to'];
+    }
+
+    $where = $conditions ? ('WHERE ' . implode(' AND ', $conditions)) : '';
+
+    $sql = 'SELECT strftime("%Y-%m", transaction_date) AS month,
         SUM(CASE WHEN type = "deposit" THEN amount ELSE 0 END) AS deposits,
         SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END) AS expenses
-        FROM transactions
+        FROM transactions ' . $where . '
         GROUP BY month
-        ORDER BY month ASC');
+        ORDER BY month ASC';
+
+    $stmt = $db->prepare($sql);
+
+    foreach ($params as $key => $value) {
+        $type = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+        $stmt->bindValue($key, $value, $type);
+    }
+
+    $stmt->execute();
+
     return $stmt->fetchAll();
 }
